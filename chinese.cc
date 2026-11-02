@@ -4,6 +4,9 @@
 #include "chinese.hh"
 #include <stdexcept>
 #include <QCoreApplication>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QTime>
 #ifdef Q_OS_MAC
 #include <opencc/opencc.h>
 #endif
@@ -23,6 +26,12 @@ class CharacterConversionDictionary: public Transliteration::BaseTransliteration
 #else
   opencc::SimpleConverter* converter;
 #endif
+  QString converterConfig;
+  QMutex converterMutex;
+  bool initializationAttempted;
+
+  // Called while holding converterMutex, including on initialization failure.
+  void ensureConverterInitialized();
 
 public:
 
@@ -39,23 +48,36 @@ CharacterConversionDictionary::CharacterConversionDictionary( std::string const 
                                                               QIcon icon_,
                                                               QString const & openccConfig):
   Transliteration::BaseTransliterationDictionary( id, name_, icon_, false ),
-  converter( NULL )
+  converter( NULL ), converterConfig( openccConfig ),
+  initializationAttempted( false )
 {
+}
+
+void CharacterConversionDictionary::ensureConverterInitialized()
+{
+  if ( initializationAttempted )
+    return;
+  initializationAttempted = true;
+  QTime timer;
+  timer.start();
   try {
 #ifdef Q_OS_MAC
-    converter = opencc_open( openccConfig.toLocal8Bit().constData() );
+    converter = opencc_open( converterConfig.toLocal8Bit().constData() );
     if( converter == reinterpret_cast< opencc_t >( -1 ) )
     {
       gdWarning( "CharacterConversionDictionary: failed to initialize OpenCC from config %s: %s\n",
-                 openccConfig.toLocal8Bit().constData(), opencc_error() );
+                 converterConfig.toLocal8Bit().constData(), opencc_error() );
+      converter = NULL;
     }
 #else
-    converter = new opencc::SimpleConverter( openccConfig.toLocal8Bit().constData() );
+    converter = new opencc::SimpleConverter( converterConfig.toLocal8Bit().constData() );
 #endif
-  } catch ( std::runtime_error& e ) {
+  } catch ( std::exception& e ) {
     gdWarning( "CharacterConversionDictionary: failed to initialize OpenCC from config %s: %s\n",
-               openccConfig.toLocal8Bit().constData(), e.what() );
+               converterConfig.toLocal8Bit().constData(), e.what() );
   }
+  gdDebug( "OpenCC: lazy initialization of %s took %d ms",
+           converterConfig.toLocal8Bit().constData(), timer.elapsed() );
 }
 
 CharacterConversionDictionary::~CharacterConversionDictionary()
@@ -73,6 +95,12 @@ std::vector< gd::wstring > CharacterConversionDictionary::getAlternateWritings( 
   throw()
 {
   std::vector< gd::wstring > results;
+
+  // The same dictionary can be queried concurrently by search workers.
+  // Serialize converter creation and conversion, rather than publishing a
+  // partially initialized converter or using one concurrently.
+  QMutexLocker lock( &converterMutex );
+  ensureConverterInitialized();
 
   if ( converter != NULL ) {
     gd::wstring folded = Folding::applySimpleCaseOnly( str );

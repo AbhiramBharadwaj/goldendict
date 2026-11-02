@@ -34,6 +34,7 @@
 #include <QRunnable>
 #include <QThreadPool>
 #include <QSslConfiguration>
+#include <QTime>
 
 #include <limits.h>
 #include <set>
@@ -155,6 +156,8 @@ MainWindow::MainWindow( Config::Class & cfg_ ):
 , gdAskMessage( 0xFFFFFFFF )
 #endif
 {
+  QTime startupTimer;
+  startupTimer.start();
   if( QThreadPool::globalInstance()->maxThreadCount() < MIN_THREAD_COUNT )
     QThreadPool::globalInstance()->setMaxThreadCount( MIN_THREAD_COUNT );
 
@@ -167,6 +170,11 @@ MainWindow::MainWindow( Config::Class & cfg_ ):
 #ifndef NO_EPWING_SUPPORT
   Epwing::initialize();
 #endif
+
+  // Load file-backed dictionaries while the GUI builds its widgets. Network
+  // dictionaries are still finalized on the GUI thread below.
+  LoadDictionaries startupLoader( cfg );
+  startupLoader.start();
 
   ui.setupUi( this );
 
@@ -792,7 +800,7 @@ MainWindow::MainWindow( Config::Class & cfg_ ):
 
   setupNetworkCache( cfg.preferences.maxNetworkCacheSize );
 
-  makeDictionaries();
+  makeDictionaries( &startupLoader );
 
   // After we have dictionaries and groups, we can populate history
 //  historyChanged();
@@ -926,6 +934,10 @@ MainWindow::MainWindow( Config::Class & cfg_ ):
     navBack->setIcon( QIcon( ":/icons/next.png" ) );
     navForward->setIcon( QIcon( ":/icons/previous.png" ) );
   }
+  // Give the initial window and deferred dictionary initialization a head
+  // start before full-text indexing competes for disk and CPU.
+  QTimer::singleShot( 1500, this, SLOT( startBackgroundIndexing() ) );
+  gdDebug( "Startup: main window initialization took %d ms", startupTimer.elapsed() );
 }
 
 void MainWindow::ctrlTabPressed()
@@ -1369,7 +1381,7 @@ void MainWindow::setupNetworkCache( int maxSize )
   articleNetMgr.setCache( diskCache );
 }
 
-void MainWindow::makeDictionaries()
+void MainWindow::makeDictionaries( LoadDictionaries * startedLoader )
 {
   Q_ASSERT( !scanPopup && "Scan popup must not exist while dictionaries are initialized. "
                           "It does not support dictionaries changes and must be constructed anew." );
@@ -1381,7 +1393,7 @@ void MainWindow::makeDictionaries()
   ftsIndexing.stopIndexing();
   ftsIndexing.clearDictionaries();
 
-  loadDictionaries( this, isVisible(), cfg, dictionaries, dictNetMgr, false );
+  loadDictionaries( this, isVisible(), cfg, dictionaries, dictNetMgr, false, startedLoader );
 
   for( unsigned x = 0; x < dictionaries.size(); x++ )
   {
@@ -1390,10 +1402,15 @@ void MainWindow::makeDictionaries()
   }
 
   ftsIndexing.setDictionaries( dictionaries );
-  ftsIndexing.doIndexing();
 
   updateStatusLine();
   updateGroupList();
+}
+
+void MainWindow::startBackgroundIndexing()
+{
+  if ( cfg.preferences.fts.enabled && !ftsIndexing.isIndexingStarted() )
+    ftsIndexing.doIndexing();
 }
 
 void MainWindow::updateStatusLine()

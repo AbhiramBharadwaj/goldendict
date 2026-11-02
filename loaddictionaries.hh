@@ -10,6 +10,7 @@
 
 #include <QThread>
 #include <QNetworkAccessManager>
+#include <QSet>
 
 /// Use loadDictionaries() function below -- this is a helper thread class
 class LoadDictionaries: public QThread, public Dictionary::Initializing
@@ -17,6 +18,8 @@ class LoadDictionaries: public QThread, public Dictionary::Initializing
   Q_OBJECT
 
   QStringList nameFilters;
+  QSet< QString > visitedPaths;
+  std::string indexDirectory;
   Config::Paths const & paths;
   Config::SoundDirs const & soundDirs;
   Config::Hunspell const & hunspell;
@@ -30,6 +33,7 @@ class LoadDictionaries: public QThread, public Dictionary::Initializing
 public:
 
   LoadDictionaries( Config::Class const & cfg );
+  ~LoadDictionaries();
 
   virtual void run();
 
@@ -58,11 +62,14 @@ private:
 /// If showInitially is passed as true, the window will always popup.
 /// If doDeferredInit is true (default), doDeferredInit() is done on all
 /// dictionaries at the end.
+/// startedLoader may point to a loader already started with the same cfg. Its
+/// owner must keep it alive until this call returns. It will not be restarted.
 void loadDictionaries( QWidget * parent, bool showInitially,
                        Config::Class const & cfg,
                        std::vector< sptr< Dictionary::Class > > &,
                        QNetworkAccessManager & dictNetMgr,
-                       bool doDeferredInit = true );
+                       bool doDeferredInit = true,
+                       LoadDictionaries * startedLoader = 0 );
 
 /// Runs deferredInit() on all the given dictionaries. Useful when
 /// loadDictionaries() was previously called with doDeferredInit = false.

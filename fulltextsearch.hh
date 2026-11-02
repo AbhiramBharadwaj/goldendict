@@ -112,6 +112,8 @@ public:
   /// Start dictionaries indexing for full-text search
   void doIndexing();
 
+  bool isIndexingStarted() const { return started; }
+
   /// Break indexing thread
   void stopIndexing();
 

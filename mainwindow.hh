@@ -45,6 +45,8 @@
 using std::string;
 using std::vector;
 
+class LoadDictionaries;
+
 class ExpandableToolBar : public QToolBar
 {
   Q_OBJECT
@@ -212,7 +214,7 @@ private:
   void applyProxySettings();
   void applyWebSettings();
   void setupNetworkCache( int maxSize );
-  void makeDictionaries();
+  void makeDictionaries( LoadDictionaries * startedLoader = 0 );
   void updateStatusLine();
   void updateGroupList();
   void updateDictionaryBar();
@@ -283,6 +285,8 @@ private:
   QString tabFavoritesFolder( int tabNom );
 
 private slots:
+
+  void startBackgroundIndexing();
 
 #ifdef X11_MAIN_WINDOW_FOCUS_WORKAROUNDS
   void forceX11Focus();

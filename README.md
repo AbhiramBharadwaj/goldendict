@@ -116,6 +116,25 @@ To create project files for Visual Studio you can pass `"-tp vc"` option to `qma
 Note: In Qt 5.6.0 and later the `Webkit` module was removed from official release builds. You should build it from sources to compile GoldenDict.
 
 
+## Checking startup performance
+
+Run the built application with `--log-to-file` to capture startup timings in
+`gd_log.txt` in the GoldenDict configuration directory. Look for `Startup:`
+messages for dictionary scanning/loading, the remaining dictionary wait and
+finalization, and main window initialization. Scanning overlaps UI construction,
+so these timings should not be added together. `OpenCC: lazy initialization`
+messages appear on the first lookup that uses a Chinese converter.
+
+Compare the first launch and a second launch with unchanged dictionaries. The
+first launch may build dictionary indexes; subsequent launches should reuse
+them. Keep dictionary folders narrowly scoped and use recursive scanning only
+when needed. Full-text indexing starts after a short startup delay when enabled.
+
+When validating startup changes, also check overlapping dictionary paths,
+directory symlink cycles, starting to the tray, command-line word lookup, and
+Chinese conversion on its first and subsequent lookups. Overlapping paths
+should produce only one instance of each file-backed dictionary.
+
 ## Installation
 
 Installation is an optional step since the built binary can be used as-is without installation. But you can properly install via:

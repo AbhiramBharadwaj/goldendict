@@ -42,6 +42,7 @@
 
 #include <QMessageBox>
 #include <QDir>
+#include <QTime>
 
 #include <set>
 
@@ -73,17 +74,27 @@ LoadDictionaries::LoadDictionaries( Config::Class const & cfg ):
 ;
 }
 
+LoadDictionaries::~LoadDictionaries()
+{
+  // A startup loader can still be running if UI construction throws.
+  wait();
+}
+
 void LoadDictionaries::run()
 {
+  QTime timer;
+  timer.start();
+  visitedPaths.clear();
   try
   {
+    indexDirectory = FsEncoding::encode( Config::getIndexDir() );
     for( Config::Paths::const_iterator i = paths.begin(); i != paths.end(); ++i )
       handlePath( *i );
 
     // Make soundDirs
     {
       vector< sptr< Dictionary::Class > > soundDirDictionaries =
-        SoundDir::makeDictionaries( soundDirs, FsEncoding::encode( Config::getIndexDir() ), *this );
+        SoundDir::makeDictionaries( soundDirs, indexDirectory, *this );
 
       dictionaries.insert( dictionaries.end(), soundDirDictionaries.begin(),
                            soundDirDictionaries.end() );
@@ -104,6 +115,8 @@ void LoadDictionaries::run()
   {
     exceptionText = e.what();
   }
+  gdDebug( "Startup: dictionary scan/load took %d ms (%u dictionaries)",
+           timer.elapsed(), static_cast< unsigned >( dictionaries.size() ) );
 }
 
 void LoadDictionaries::handlePath( Config::Path const & path )
@@ -111,6 +124,18 @@ void LoadDictionaries::handlePath( Config::Path const & path )
   vector< string > allFiles;
 
   QDir dir( path.path );
+
+  // Canonical paths also prevent cycles through directory symlinks. Keep
+  // recursion separate so a later recursive entry can expand an earlier one.
+  QString canonicalPath = dir.canonicalPath();
+  if ( canonicalPath.isEmpty() )
+    return;
+  QString visitKey = canonicalPath + ( path.recursive ? "/recursive" : "/single" );
+  if ( visitedPaths.contains( visitKey ) )
+    return;
+  bool filesAlreadyLoaded = visitedPaths.contains( canonicalPath + "/single" )
+                           || visitedPaths.contains( canonicalPath + "/recursive" );
+  visitedPaths.insert( visitKey );
 
   QFileInfoList entries = dir.entryInfoList( nameFilters, QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot );
 
@@ -127,13 +152,16 @@ void LoadDictionaries::handlePath( Config::Path const & path )
         handlePath( Config::Path( fullName, true ) );
     }
 
-    if ( !i->isDir() )
+    if ( !filesAlreadyLoaded && !i->isDir() )
       allFiles.push_back( FsEncoding::encode( QDir::toNativeSeparators( fullName ) ) );
   }
 
+  if ( allFiles.empty() )
+    return;
+
   {
     vector< sptr< Dictionary::Class > > bglDictionaries =
-      Bgl::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      Bgl::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), bglDictionaries.begin(),
                          bglDictionaries.end() );
@@ -141,7 +169,7 @@ void LoadDictionaries::handlePath( Config::Path const & path )
 
   {
     vector< sptr< Dictionary::Class > > stardictDictionaries =
-      Stardict::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this, maxHeadwordToExpand );
+      Stardict::makeDictionaries( allFiles, indexDirectory, *this, maxHeadwordToExpand );
 
     dictionaries.insert( dictionaries.end(), stardictDictionaries.begin(),
                          stardictDictionaries.end() );
@@ -149,7 +177,7 @@ void LoadDictionaries::handlePath( Config::Path const & path )
 
   {
     vector< sptr< Dictionary::Class > > lsaDictionaries =
-      Lsa::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      Lsa::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), lsaDictionaries.begin(),
                          lsaDictionaries.end() );
@@ -158,7 +186,7 @@ void LoadDictionaries::handlePath( Config::Path const & path )
   {
     vector< sptr< Dictionary::Class > > dslDictionaries =
       Dsl::makeDictionaries(
-          allFiles, FsEncoding::encode( Config::getIndexDir() ), *this, maxPictureWidth, maxHeadwordSize );
+          allFiles, indexDirectory, *this, maxPictureWidth, maxHeadwordSize );
 
     dictionaries.insert( dictionaries.end(), dslDictionaries.begin(),
                          dslDictionaries.end() );
@@ -166,49 +194,49 @@ void LoadDictionaries::handlePath( Config::Path const & path )
 
   {
     vector< sptr< Dictionary::Class > > dictdDictionaries =
-      DictdFiles::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      DictdFiles::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), dictdDictionaries.begin(),
                          dictdDictionaries.end() );
   }
   {
     vector< sptr< Dictionary::Class > > xdxfDictionaries =
-      Xdxf::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      Xdxf::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), xdxfDictionaries.begin(),
                          xdxfDictionaries.end() );
   }
   {
     vector< sptr< Dictionary::Class > > sdictDictionaries =
-      Sdict::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      Sdict::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), sdictDictionaries.begin(),
                          sdictDictionaries.end() );
   }
   {
     vector< sptr< Dictionary::Class > > aardDictionaries =
-      Aard::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this, maxHeadwordToExpand );
+      Aard::makeDictionaries( allFiles, indexDirectory, *this, maxHeadwordToExpand );
 
     dictionaries.insert( dictionaries.end(), aardDictionaries.begin(),
                          aardDictionaries.end() );
   }
   {
     vector< sptr< Dictionary::Class > > zipSoundsDictionaries =
-      ZipSounds::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      ZipSounds::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), zipSoundsDictionaries.begin(),
                          zipSoundsDictionaries.end() );
   }
   {
     vector< sptr< Dictionary::Class > > mdxDictionaries =
-      Mdx::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      Mdx::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), mdxDictionaries.begin(),
                          mdxDictionaries.end() );
   }
   {
     vector< sptr< Dictionary::Class > > glsDictionaries =
-      Gls::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      Gls::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), glsDictionaries.begin(),
                          glsDictionaries.end() );
@@ -216,14 +244,14 @@ void LoadDictionaries::handlePath( Config::Path const & path )
 #ifdef MAKE_ZIM_SUPPORT
   {
     vector< sptr< Dictionary::Class > > zimDictionaries =
-      Zim::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this, maxHeadwordToExpand );
+      Zim::makeDictionaries( allFiles, indexDirectory, *this, maxHeadwordToExpand );
 
     dictionaries.insert( dictionaries.end(), zimDictionaries.begin(),
                          zimDictionaries.end() );
   }
   {
     vector< sptr< Dictionary::Class > > slobDictionaries =
-      Slob::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this, maxHeadwordToExpand );
+      Slob::makeDictionaries( allFiles, indexDirectory, *this, maxHeadwordToExpand );
 
     dictionaries.insert( dictionaries.end(), slobDictionaries.begin(),
                          slobDictionaries.end() );
@@ -232,7 +260,7 @@ void LoadDictionaries::handlePath( Config::Path const & path )
 #ifndef NO_EPWING_SUPPORT
   {
     vector< sptr< Dictionary::Class > > epwingDictionaries =
-      Epwing::makeDictionaries( allFiles, FsEncoding::encode( Config::getIndexDir() ), *this );
+      Epwing::makeDictionaries( allFiles, indexDirectory, *this );
 
     dictionaries.insert( dictionaries.end(), epwingDictionaries.begin(),
                          epwingDictionaries.end() );
@@ -250,15 +278,18 @@ void loadDictionaries( QWidget * parent, bool showInitially,
                        Config::Class const & cfg,
                        std::vector< sptr< Dictionary::Class > > & dictionaries,
                        QNetworkAccessManager & dictNetMgr,
-                       bool doDeferredInit_ )
+                       bool doDeferredInit_, LoadDictionaries * startedLoader )
 {
+  QTime timer;
+  timer.start();
   dictionaries.clear();
 
-  ::Initializing init( parent, showInitially );
+  ::Initializing init( parent, showInitially || ( startedLoader && startedLoader->isRunning() ) );
 
   // Start a thread to load all the dictionaries
 
-  LoadDictionaries loadDicts( cfg );
+  LoadDictionaries localLoader( cfg );
+  LoadDictionaries & loadDicts = startedLoader ? *startedLoader : localLoader;
 
   QObject::connect( &loadDicts, SIGNAL( indexingDictionarySignal( QString const & ) ),
                     &init, SLOT( indexing( QString const & ) ) );
@@ -268,9 +299,12 @@ void loadDictionaries( QWidget * parent, bool showInitially,
   QObject::connect( &loadDicts, SIGNAL( finished() ),
                     &localLoop, SLOT( quit() ) );
 
-  loadDicts.start();
+  if ( !startedLoader )
+    loadDicts.start();
 
-  localLoop.exec();
+  // The early startup worker may already have completed before connecting.
+  if ( loadDicts.isRunning() )
+    localLoop.exec();
 
   loadDicts.wait();
 
@@ -420,6 +454,7 @@ void loadDictionaries( QWidget * parent, bool showInitially,
 
   if ( doDeferredInit_ )
     doDeferredInit( dictionaries );
+  gdDebug( "Startup: dictionary finalization/wait took %d ms", timer.elapsed() );
 }
 
 void doDeferredInit( std::vector< sptr< Dictionary::Class > > & dictionaries )
